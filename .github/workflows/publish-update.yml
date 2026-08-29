@@ -1,0 +1,107 @@
+name: Publish OrgaPC update
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.orgapc-source.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: orgapc-public-update-publish
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read publication source
+        id: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(python -c "import json; print(json.load(open('.orgapc-source.json'))['version'])")
+          URL=$(python -c "import json; print(json.load(open('.orgapc-source.json'))['artifact_url'])")
+          test -n "$VERSION"
+          test -n "$URL"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Download and validate installer artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 '${{ steps.src.outputs.url }}' -o /tmp/orgapc.zip
+          rm -rf /tmp/orgapc && mkdir -p /tmp/orgapc
+          unzip -q /tmp/orgapc.zip -d /tmp/orgapc
+          INSTALLER=$(find /tmp/orgapc -type f -name 'OrgaPC-Setup.exe' -print -quit)
+          test -n "$INSTALLER"
+          test "$(stat -c%s "$INSTALLER")" -gt 10000000
+          cp "$INSTALLER" /tmp/OrgaPC-Setup.exe
+          sha256sum /tmp/OrgaPC-Setup.exe
+
+      - name: Publish immutable GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="v${{ steps.src.outputs.version }}"
+          gh release view "$TAG" >/dev/null 2>&1 && gh release delete "$TAG" --yes --cleanup-tag || true
+          gh release create "$TAG" /tmp/OrgaPC-Setup.exe#OrgaPC-Setup.exe \
+            --title "OrgaPC ${{ steps.src.outputs.version }}" \
+            --notes "Mise à jour officielle OrgaPC ${{ steps.src.outputs.version }}. Dépôt de distribution uniquement — aucun code source."
+
+      - name: Generate latest.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          HASH=$(sha256sum /tmp/OrgaPC-Setup.exe | awk '{print $1}')
+          SIZE=$(stat -c%s /tmp/OrgaPC-Setup.exe)
+          python - <<PY
+          import json
+          version = '${{ steps.src.outputs.version }}'
+          data = {
+              'version': version,
+              'sha256': '$HASH',
+              'size': int('$SIZE'),
+              'channel': 'alpha',
+              'installer_url': f'https://github.com/Moe1618/orgapc-updates/releases/download/v{version}/OrgaPC-Setup.exe'
+          }
+          with open('latest.json', 'w', encoding='utf-8') as f:
+              json.dump(data, f, indent=2)
+              f.write('\n')
+          PY
+          cat latest.json
+
+      - name: Commit public manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'orgapc-release-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add latest.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Publish OrgaPC ${{ steps.src.outputs.version }} manifest"
+          git push
+
+      - name: Verify public distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 3
+          curl --fail --retry 5 https://raw.githubusercontent.com/Moe1618/orgapc-updates/main/latest.json -o /tmp/live.json
+          python - <<PY
+          import json
+          d=json.load(open('/tmp/live.json'))
+          assert d['version']=='${{ steps.src.outputs.version }}'
+          assert len(d['sha256'])==64
+          assert d['installer_url'].startswith('https://github.com/Moe1618/orgapc-updates/releases/download/')
+          PY
+          curl --fail --location --head --retry 5 "https://github.com/Moe1618/orgapc-updates/releases/download/v${{ steps.src.outputs.version }}/OrgaPC-Setup.exe"
