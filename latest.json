@@ -1,7 +1,7 @@
 {
-  "version": "0.6.6",
-  "sha256": "b401ce8d303838ef57e4fae5a09b6773e95bedaf7722c3f14f21aa78353d7ad2",
-  "size": 105508593,
+  "version": "0.6.8",
+  "sha256": "a99fd2a53b9b73769a482d933c4f3bfb5b3651679d388747a0c897e99a2501a6",
+  "size": 105527216,
   "channel": "alpha",
-  "installer_url": "https://github.com/Moe1618/orgapc-updates/releases/download/v0.6.6/OrgaPC-Setup.exe"
+  "installer_url": "https://github.com/Moe1618/orgapc-updates/releases/download/v0.6.8/OrgaPC-Setup.exe"
 }
